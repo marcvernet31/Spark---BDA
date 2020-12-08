@@ -4,6 +4,9 @@ from pyspark.sql import SQLContext
 from pyspark.sql import Row
 from pyspark.sql import SparkSession
 
+from os import walk
+
+
 from password import *
 """
 Cal tenir el fitxer password.py and:
@@ -34,8 +37,10 @@ DM: Delayed Minutes (total de minuts de retard acumulat en tots els vols)
 Cal:    AIMS(fligths): aircraftregistration, flightid, actualdeparture, actualarrival,
         scheduledarrival, canceled,
 
-        AMOS: necessari per trobar quan fa falta manteniment
+        AMOS(maintenanceevent): aircraftregistration, starttime
+
         csv: llegir les dades de sensors
+
 -----------------
 Suposicions generals:
     - Suposem que totes les dades de AIMS i AMOS ja venen netejades i no hi haura
@@ -52,21 +57,59 @@ def process(sc):
 		.format("jdbc")
 		.option("driver","org.postgresql.Driver")
 		.option("url", "jdbc:postgresql://postgresfib.fib.upc.edu:6433/AIMS?sslmode=require")
-		.option("dbtable", "public.slots")
+		.option("dbtable", "public.flights")
 		.option("user", AIMSusername)
 		.option("password", AIMSpassword)
 		.load())
+
     AMOS = (sess.read
 		.format("jdbc")
 		.option("driver","org.postgresql.Driver")
 		.option("url", "jdbc:postgresql://postgresfib.fib.upc.edu:6433/AMOS?sslmode=require")
-		.option("dbtable", "oldinstance.workorders")
+		.option("dbtable", "oldinstance.maintenanceevents")
 		.option("user", AIMSusername)
 		.option("password", AIMSpassword)
 		.load())
 
-    #count = (AIMS.select("departureairport").rdd.map(lambda t: t[0]).distinct().count())
+    # Afegir la columna day (2012-7-23), per poder agregar per dia
+    # Eliminar vols cancelats
+    AIMS = (AIMS.withColumn('day', AIMS['actualarrival'].cast('date'))
+        .filter(AIMS['cancelled'] == "False"))
 
-    a = list(AMOS.columns)
-    print(a)
-    #print(str(count) + " airports with at least one departure")
+    # Seleccionar: aircraftid, day, (actualarrival-actualdeparture)
+    # FH = AIMS.rdd.map(lambda t: (t[0],t[14], t[8]-t[7]))
+    # FC =
+    # DM =
+
+    # Lectura dels csv
+    path = "resources/trainingData"
+    f = []
+    for (dirpath, dirnames, filenames) in walk(path):
+        f.extend(filenames)
+        break
+
+    # Crear un dataFrame on posar les dades del csv (quin format ?)
+    # ...
+
+    for filename in f:
+        # Mitjana del valor del sensor
+        input = (sc.textFile("./" + path + "/" + filename)
+        		.filter(lambda t: "date" not in t)
+                .map(lambda t: t.split(";")[2]).collect())
+        input = list(map(float, input))
+        sensor_avg = sum(input) / len(input)
+
+        # Trobar el aircraftid i dia (separar del titol, ddmmyy to dateTime,...)
+        # ...
+        # Posar tot al DataFrame
+        # ...
+
+
+    # Join de KPI's derivats de AIMS amb dataFrame dels csv
+    # ...
+
+    # Extreure led dades de manteniment de AMOS i creuar amb la taula anterior
+    # ...
+
+    # Retornar dataFrame unificat (quin format ? )
+    # ...
