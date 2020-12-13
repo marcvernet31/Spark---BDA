@@ -6,7 +6,7 @@ from pyspark.sql import SparkSession
 
 import datetime
 from os import walk
-from pyspark.sql.functions import datediff, to_date, lit, unix_timestamp,col
+from pyspark.sql.functions import datediff, to_date, lit, unix_timestamp,col, date_format
 
 
 from password import *
@@ -49,7 +49,7 @@ Cal:    AIMS(fligths): aircraftregistration, flightid, actualdeparture, actualar
 -----------------
 Suposicions generals:
     - Suposem que totes les dades de AIMS i AMOS ja venen netejades i no hi haura
-    problemes raros de vols que s'intercalen i les merdes de sempre
+    problemes raros de vols que s'intercalen i les merdes de sempre (hahaha, segur que si)
     - Suposem que flightid de AMOS(flights) és un identificador únic per cada vol
     (es pot comprovar facil)
     - Per calcular DM, suposem que un vol canelat no conta com a retard
@@ -60,6 +60,7 @@ Suposicions generals:
     - Assumim flightid un identificador únic
     - Si un vol arriba abans de la scheduledarrival té retard negatiu que resta al retard total
         (esta be ?)
+    - Assumim que un mateix avió pot tenir diferents manteniments programats (?)
 """
 
 
@@ -89,8 +90,11 @@ def process(sc):
     # Eliminar vols cancelats
     AIMS = (AIMS.withColumn('day', AIMS['actualarrival'].cast('date'))
         .filter(AIMS['cancelled'] == "False").withColumn("duration", datediff(AIMS['actualdeparture'], AIMS['actualarrival']))
+        .withColumn('day', date_format(col("day"), "y-MM-dd"))
+        #.orderBy(["day", "aircraftregistration"],ascending=False)
         )
 
+    #   COMPROVAR si ordenant és mes ràpid
 
     # Sortirda: day(datetime), aircraftregistration(string), sum(duration_hours)
     #   duration_hours = (actualarrival-actualdeparture) en hores (per dia)
@@ -158,13 +162,57 @@ def process(sc):
     SensorLectures = sess.createDataFrame(vals, columns)
 
     # Crear labels de manteniment
+    # Sortida: aircraftregistration(string), startime(datetime)
+    MaintenanceEvents = (AMOS.select("aircraftregistration", "starttime")
+        .withColumn('starttime', date_format(col("starttime"), "y-MM-dd"))
+    )
+
+    # Vincular els labels de manteniment amb les dates de vol
     # ...
+
 
     # Join de tots els dataframes de AMIS i csv
     # ...
 
-    # Extreure led dades de manteniment de AMOS i creuar amb la taula anterior
-    # ...
 
     # Retornar dataFrame unificat (quin format ? )
     # ...
+
+
+
+
+
+"""
+    print("--------------------------")
+    for x in AIMS.collect():
+        print("AIMS")
+        print(x)
+        break
+    for x in FH.collect():
+        print("FH")
+        print(x)
+        break
+    for x in FC.collect():
+        print("FC")
+        print(x)
+        break
+    for x in DM.collect():
+        print("DM")
+        print(x)
+        break
+    for x in MaintenanceEvents.collect():
+        print("MaintenanceEvents")
+        print(x)
+        break
+    print("--------------------------")
+
+FH
+Row(day='2012-11-10', aircraftregistration='XY-OHF', FH=1.9175)
+FC
+Row(day='2012-11-10', aircraftregistration='XY-OHF', FC=1)
+DM
+Row(day='2012-11-10', aircraftregistration='XY-OHF', DM=0.2902777777777778)
+MaintenanceEvents
+Row(aircraftregistration='XY-YCV', starttime='2012-04-07')
+
+"""
