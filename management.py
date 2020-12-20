@@ -5,8 +5,9 @@ from pyspark.sql import Row
 from pyspark.sql import SparkSession
 
 import datetime
+import time
 from os import walk
-from pyspark.sql.functions import datediff, to_date, lit, unix_timestamp,col, date_format
+from pyspark.sql.functions import datediff, when, to_date, lit, unix_timestamp,col, date_format, monotonically_increasing_id, row_number
 
 
 from password import *
@@ -49,18 +50,22 @@ Cal:    AIMS(fligths): aircraftregistration, flightid, actualdeparture, actualar
 -----------------
 Suposicions generals:
     - Suposem que totes les dades de AIMS i AMOS ja venen netejades i no hi haura
-    problemes raros de vols que s'intercalen i les merdes de sempre (hahaha, segur que si)
+    problemes raros de vols que s'intercalen i les merdes de sempre
     - Suposem que flightid de AMOS(flights) és un identificador únic per cada vol
     (es pot comprovar facil)
     - Per calcular DM, suposem que un vol canelat no conta com a retard
     - Considerem actualdeparture el dia en que es fa el vol (per a l'hora d'agregar en dies)
-    - Suposem que tots els vols arriben despres de la sortida (actualarrival > actualdeparture) (LOL)
+    - Suposem que tots els vols arriben despres de la sortida (actualarrival > actualdeparture)
     - Per FC assumim que totes les avions que despeguen aterren en algun moment
     - Un FC conta pel dia en que despega, encara que aterri en un altre dia
     - Assumim flightid un identificador únic
     - Si un vol arriba abans de la scheduledarrival té retard negatiu que resta al retard total
         (esta be ?)
     - Assumim que un mateix avió pot tenir diferents manteniments programats (?)
+
+Cal fer:
+    - Comprovar que els valors de DM estan bé.
+    - Veure si es pot implementar .cache() per anar més ràpid
 """
 
 
@@ -72,7 +77,7 @@ def process(sc):
 		.format("jdbc")
 		.option("driver","org.postgresql.Driver")
 		.option("url", "jdbc:postgresql://postgresfib.fib.upc.edu:6433/AIMS?sslmode=require")
-		.option("dbtable", "public.flights")
+		.option("dbtable", "oldinstance.flights")
 		.option("user", AIMSusername)
 		.option("password", AIMSpassword)
 		.load())
@@ -89,12 +94,11 @@ def process(sc):
     # Afegir la columna day (2012-7-23), per poder agregar per dia
     # Eliminar vols cancelats
     AIMS = (AIMS.withColumn('day', AIMS['actualarrival'].cast('date'))
-        .filter(AIMS['cancelled'] == "False").withColumn("duration", datediff(AIMS['actualdeparture'], AIMS['actualarrival']))
+        #.filter(AIMS['cancelled'] == "False").withColumn("duration", datediff(AIMS['actualdeparture'], AIMS['actualarrival']))
         .withColumn('day', date_format(col("day"), "y-MM-dd"))
         #.orderBy(["day", "aircraftregistration"],ascending=False)
         )
 
-    #   COMPROVAR si ordenant és mes ràpid
 
     # Sortirda: day(datetime), aircraftregistration(string), sum(duration_hours)
     #   duration_hours = (actualarrival-actualdeparture) en hores (per dia)
@@ -161,58 +165,20 @@ def process(sc):
     columns = ['day', 'aircraftregistration', 'sensor_avg']
     SensorLectures = sess.createDataFrame(vals, columns)
 
+
+
+    # Join de les dades d'AIMS i les dels SensorLectures
+    # FUNCIONA!
+    cond = ['day', 'aircraftregistration']
+    KPI = FH.join(FC, cond).join(DM, cond).join(SensorLectures, cond)
+
+
+
     # Crear labels de manteniment
     # Sortida: aircraftregistration(string), startime(datetime)
     MaintenanceEvents = (AMOS.select("aircraftregistration", "starttime")
         .withColumn('starttime', date_format(col("starttime"), "y-MM-dd"))
     )
 
-    # Vincular els labels de manteniment amb les dates de vol
-    # ...
-
-
-    # Join de tots els dataframes de AMIS i csv
-    # ...
-
-
-    # Retornar dataFrame unificat (quin format ? )
-    # ...
-
-
-
-
-
-"""
-    print("--------------------------")
-    for x in AIMS.collect():
-        print("AIMS")
-        print(x)
-        break
-    for x in FH.collect():
-        print("FH")
-        print(x)
-        break
-    for x in FC.collect():
-        print("FC")
-        print(x)
-        break
-    for x in DM.collect():
-        print("DM")
-        print(x)
-        break
-    for x in MaintenanceEvents.collect():
-        print("MaintenanceEvents")
-        print(x)
-        break
-    print("--------------------------")
-
-FH
-Row(day='2012-11-10', aircraftregistration='XY-OHF', FH=1.9175)
-FC
-Row(day='2012-11-10', aircraftregistration='XY-OHF', FC=1)
-DM
-Row(day='2012-11-10', aircraftregistration='XY-OHF', DM=0.2902777777777778)
-MaintenanceEvents
-Row(aircraftregistration='XY-YCV', starttime='2012-04-07')
-
-"""
+    # Crear labels del manteniment i vincular amb la resta de dades
+    #   ....
