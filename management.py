@@ -198,5 +198,7 @@ def process(sc):
 ##################################################
     #Resultat TEMPORAL per poder seguir treballant
     #ESTA MALAMENT
-    KPI = KPI.withColumn('label', when(rand() > 0.5, 1).otherwise(0))
-    KPI.toPandas().to_csv('management_temporal.csv')
+    KPI = (KPI.withColumn('label', when(rand() > 0.5, 1).otherwise(0))
+        .drop("day").drop("aircraftregistration")
+        )
+    KPI.toPandas().to_csv('dataTemporal/management_temporal.csv')
