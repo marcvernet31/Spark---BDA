@@ -8,9 +8,11 @@ import datetime
 import time
 from os import walk
 from pyspark.sql.functions import datediff, when, to_date, lit, unix_timestamp,col, date_format, monotonically_increasing_id, row_number
+from pyspark.sql.functions import rand,when
 
 
 from password import *
+
 """
 Cal tenir el fitxer password.py and:
     AIMSusername = "nom.cognom"
@@ -64,8 +66,13 @@ Suposicions generals:
     - Assumim que un mateix avió pot tenir diferents manteniments programats (?)
 
 Cal fer:
-    - Comprovar que els valors de DM estan bé.
+    -  Els labels son aleatoris per poder seguir treballant, cal trobar la manera de calcularlos
+    i posarlos al dataframe de forma eficient.
+    - Ara mateix es retorna el dataframe en un csv per comoditat, a l'entrega final no es poden guardar
+    dades intermitges, per tant ha d'anar tot seguit.
     - Veure si es pot implementar .cache() per anar més ràpid
+
+    - Com a cosa extra el que ara es guarda en un csv s'hauria de guardar en Hadoop
 """
 
 
@@ -166,12 +173,10 @@ def process(sc):
     SensorLectures = sess.createDataFrame(vals, columns)
 
 
-
     # Join de les dades d'AIMS i les dels SensorLectures
     # FUNCIONA!
     cond = ['day', 'aircraftregistration']
     KPI = FH.join(FC, cond).join(DM, cond).join(SensorLectures, cond)
-
 
 
     # Crear labels de manteniment
@@ -180,5 +185,18 @@ def process(sc):
         .withColumn('starttime', date_format(col("starttime"), "y-MM-dd"))
     )
 
-    # Crear labels del manteniment i vincular amb la resta de dades
-    #   ....
+    # Intent de caclcular els labels (NO FUNCIONA)
+#    lab = (KPI.join(MaintenanceEvents, 'aircraftregistration')
+#        .withColumn('label',
+#            when((unix_timestamp('day', "yyyy-MM-dd") + 60*60*24*7 >  unix_timestamp('starttime', "yyyy-MM-dd"))
+#                & (unix_timestamp('day', "yyyy-MM-dd") <  unix_timestamp('starttime', "yyyy-MM-dd")), 1)
+#            .otherwise(0))
+#        .drop('starttime')
+#        .groupBy('day', 'aircraftregistration').sum("label")
+#        )
+
+##################################################
+    #Resultat TEMPORAL per poder seguir treballant
+    #ESTA MALAMENT
+    KPI = KPI.withColumn('label', when(rand() > 0.5, 1).otherwise(0))
+    KPI.toPandas().to_csv('management_temporal.csv')
