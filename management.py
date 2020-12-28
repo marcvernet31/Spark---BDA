@@ -101,7 +101,7 @@ def process(sc):
     # Afegir la columna day (2012-7-23), per poder agregar per dia
     # Eliminar vols cancelats
     AIMS = (AIMS.withColumn('day', AIMS['actualarrival'].cast('date'))
-        #.filter(AIMS['cancelled'] == "False").withColumn("duration", datediff(AIMS['actualdeparture'], AIMS['actualarrival']))
+        .filter(AIMS['cancelled'] == "False")
         .withColumn('day', date_format(col("day"), "y-MM-dd"))
         #.orderBy(["day", "aircraftregistration"],ascending=False)
         )
@@ -198,7 +198,10 @@ def process(sc):
 ##################################################
     #Resultat TEMPORAL per poder seguir treballant
     #ESTA MALAMENT
-    KPI = (KPI.withColumn('label', when(rand() > 0.5, 1).otherwise(0))
-        .drop("day").drop("aircraftregistration")
-        )
-    KPI.toPandas().to_csv('dataTemporal/management_temporal.csv')
+    # KPI_detailed: amb day i aircraftregistration (per extreure KPI's a runtime.py)
+    # KPImatrix: sense day ni aircraftregistration (pel model de prediccio de analysis.py)
+    KPI_detailed = KPI.withColumn('label', when(rand() > 0.5, 1).otherwise(0))
+    KPI_detailed.toPandas().to_csv('dataTemporal/management_detailed_temporal.csv')
+
+    KPImatrix =  KPI_detailed.drop("day").drop("aircraftregistration")
+    KPImatrix.toPandas().to_csv('dataTemporal/management_temporal.csv')
