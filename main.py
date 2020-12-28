@@ -4,8 +4,14 @@ import pyspark
 from pyspark import SparkConf
 from pyspark.sql import SparkSession
 
+"""
+Modificar el flow de l'execució
+"""
+
 # Afegir fitxers a vincular
 import management
+import analysis
+import runtime
 
 HADOOP_HOME = "./resources/hadoop_home"
 JDBC_JAR = "./resources/postgresql-42.2.8.jar"
@@ -37,7 +43,11 @@ if(__name__== "__main__"):
     if(len(sys.argv) < 2):
         print("Funcions actuals: (management)")
         exit()
-    if(sys.argv[1] == "management"):
+    elif(sys.argv[1] == "management"):
         management.process(sc)
+    elif(sys.argv[1] == "analysis"):
+        analysis.process(sc)
+    elif(sys.argv[1] == "runtime"):
+        runtime.process(sc)
     else:
        print("Funcio no existent")
