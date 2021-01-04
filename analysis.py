@@ -24,32 +24,35 @@ import shutil
 
 
 """
-Decision Tree:
-    https://spark.apache.org/docs/latest/mllib-decision-tree.html
+By using the data matrix created in the previous pipeline, we want to train a classifier. In the literature,
+we can find many papers reporting that decision trees perform well for predicting transport delays.
+Thus, we will use the MLlib library to train a decision tree.
 """
 
 def process(sc, db, save_model):
 
     input = db
+    #Especifiquem les columnes que volem que siguin "features"
     vector_assembler = VectorAssembler(inputCols=["sensor_avg", "flighthours", "flightcycles", "delayedminutes"],outputCol="features")
     df_temp = vector_assembler.transform(input)
     data = df_temp.drop("sensor_avg", "flighthours", "flightcycles", "delayedminutes")
+
+    #Especifiquem que la label és la columna "kind"
     l_indexer = StringIndexer(inputCol="kind", outputCol="label")
     data = l_indexer.fit(data).transform(data)
 
 
-    #data = input.map(lambda t: LabeledPoint(t[5],[t[:4]]))
-
-    # Divisió en training i test (0.7:0.3)
+    # Divisió en train data i test data balancejada per a una quantitat semblant de labels True i False
     trainingData = data.sampleBy('label', fractions = {0: .95, 1: .8}, seed = 78927)
     testData = data.subtract(trainingData)
-    # Decision Tree
-    model = DecisionTreeClassifier(labelCol="label", featuresCol="features", maxDepth = 30)
+    # Definim el model de Decision Tree
+    model = DecisionTreeClassifier(labelCol="label", featuresCol="features", maxDepth = 5)
     fited_model = model.fit(trainingData)
 
-    # Validació amb les dades de test
+    # Validem el model amb les dades de test
     predictions = fited_model.transform(testData)
 
+    #Calculem l'accuracy i el recall
     evaluator = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction",metricName="accuracy")
     evaluator2 = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction",metricName="recallByLabel")
     accuracy = evaluator.evaluate(predictions)
@@ -65,7 +68,6 @@ def process(sc, db, save_model):
         my_file = Path("dataOutput/myDecisionTreeClassificationModel")
         if my_file.is_dir():
             shutil.rmtree("dataOutput/myDecisionTreeClassificationModel")
-
         # guardar
         fited_model.save("dataOutput/myDecisionTreeClassificationModel")
 

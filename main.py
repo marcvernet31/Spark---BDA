@@ -24,22 +24,6 @@ Cal tenir el fitxer password.py and:
 
 (linux) Cal conectar-se amb:
      f5fpc -s -x -t https://upclink.upc.edu
-
-Cal:
-
-main.py:
-    - la variable save_model no funciona, sempre guarda el model. S'ha pasar el model
-    com a parametre de runtime.py
-runtime.py:
-    - el model ha de pasar com a parametre, no s'ha de carregar sempre de local
-    (ara no funciona)
-    - posar una explicacio a la capçalera de que fa (com la que hi ha a management.py)
-analysis.py:
-    - posar una explicacio a la capçalera de que fa (com la que hi ha a management.py)
-
-
-Comentar tot el codi i posar-lo bonic
-eliminar els imports que no facin falta
 """
 
 
@@ -57,11 +41,12 @@ args = parser.parse_args()
 HADOOP_HOME = "./resources/hadoop_home"
 JDBC_JAR = "./resources/postgresql-42.2.8.jar"
 
-# (canviar segons requeriments)
-#PYSPARK_PYTHON = "python3.6"
-#PYSPARK_DRIVER_PYTHON = "python3.6"
-PYSPARK_PYTHON = "python3.8"
-PYSPARK_DRIVER_PYTHON = "python3.8"
+# Comentar en funció de la teva versió de Python
+PYSPARK_PYTHON = "python3.6"
+PYSPARK_DRIVER_PYTHON = "python3.6"
+#PYSPARK_PYTHON = "python3.8"
+#PYSPARK_DRIVER_PYTHON = "python3.8"
+
 
 if(__name__== "__main__"):
     os.environ["HADOOP_HOME"] = HADOOP_HOME
@@ -106,12 +91,11 @@ if(__name__== "__main__"):
     else:
         reuse_model = 0
 
-
     # Cas en que es reutilitza un model ja calculat (comprovant que existeix)
     my_dir = Path("dataOutput/myDecisionTreeClassificationModel")
     if reuse_model and my_dir.is_dir():
         start = time.time()
-        runtime.process(sc, str(date_query), str(aircraft_query))
+        runtime.process(sc, str(date_query), str(aircraft_query), 0, True)
         end = time.time()
 
         print("------------------------------------------")
@@ -133,7 +117,7 @@ if(__name__== "__main__"):
 
         # resultat final
         start_r = time.time()
-        runtime.process(sc, str(date_query), str(aircraft_query))
+        runtime.process(sc, str(date_query), str(aircraft_query), model, save_model)
         end_r = time.time()
 
         end = time.time()
