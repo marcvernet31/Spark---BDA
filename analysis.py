@@ -12,78 +12,61 @@ from pyspark.ml.classification import DecisionTreeClassifier
 from pyspark.ml.feature import StringIndexer, VectorIndexer
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 from pyspark.mllib.evaluation import MulticlassMetrics
+from pyspark.ml.linalg import Vectors
+from pyspark.ml.feature import VectorAssembler
+
 
 from pyspark.mllib.tree import DecisionTree, DecisionTreeModel
 from pyspark.mllib.util import MLUtils
+
+from pathlib import Path
+import shutil
 
 
 """
 Decision Tree:
     https://spark.apache.org/docs/latest/mllib-decision-tree.html
-
-
-Comentaris // Cal canviar:
-    - Ara el fitxer d'entrada és un csv, i a l'entrega ha de ser un dataframe o hadoop.
-    (Per tant tot l'input de dades s'ha de canviar). EL format de l'input final pot fer canviar
-    bastant el preprocés que cal abans de poder declarar el model.
-
-    - S'ha de tenir en conte que ara l'error de test és molt gran perque els labels són aleatoris
-
-    - Igual que el csv, el decision tree de moment es guarda de forma local, a la versió final
-    ha d'anar tot d'una tirada o guardarse en hadoop
-
-    - Els parametres del DecisionTree son els que venien per defecte, caldria entendre que fa cadascun
-    per saber quin valor posar.
-
-    - L'execcució és molt rapida, per tant potser es podrien fer proves amb diferents parametres del
-    DecisionTree per veure quins son millors.
-
 """
 
-def process(sc):
-    sess = SparkSession(sc)
+def process(sc, db, save_model):
 
-    input = (sc.textFile("dataTemporal/management_temporal.csv")
-		.filter(lambda t: "FH" not in t)
-		.map(lambda t: (t.split(",")))
-        )
+    input = db
+    vector_assembler = VectorAssembler(inputCols=["sensor_avg", "flighthours", "flightcycles", "delayedminutes"],outputCol="features")
+    df_temp = vector_assembler.transform(input)
+    data = df_temp.drop("sensor_avg", "flighthours", "flightcycles", "delayedminutes")
+    l_indexer = StringIndexer(inputCol="kind", outputCol="label")
+    data = l_indexer.fit(data).transform(data)
 
-    # Canvi de dades al format LabeledPoint: [label, [features]]
-    data = input.map(lambda t: LabeledPoint(t[5],[t[:4]]))
+
+    #data = input.map(lambda t: LabeledPoint(t[5],[t[:4]]))
 
     # Divisió en training i test (0.7:0.3)
-    (trainingData, testData) = data.randomSplit([0.7, 0.3])
-
+    trainingData = data.sampleBy('label', fractions = {0: .95, 1: .8}, seed = 78927)
+    testData = data.subtract(trainingData)
     # Decision Tree
-    model = DecisionTree.trainClassifier(trainingData, numClasses=2, categoricalFeaturesInfo={},
-            impurity='gini', maxDepth=5, maxBins=32)
+    model = DecisionTreeClassifier(labelCol="label", featuresCol="features", maxDepth = 30)
+    fited_model = model.fit(trainingData)
 
     # Validació amb les dades de test
-    predictions = model.predict(testData.map(lambda x: x.features))
-    labelsAndPredictions = testData.map(lambda lp: lp.label).zip(predictions)
+    predictions = fited_model.transform(testData)
 
-    # Test error (correctes / total)
-    testErr = labelsAndPredictions.filter(
-        lambda lp: lp[0] != lp[1]).count() / float(testData.count())
+    evaluator = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction",metricName="accuracy")
+    evaluator2 = MulticlassClassificationEvaluator(labelCol="label", predictionCol="prediction",metricName="recallByLabel")
+    accuracy = evaluator.evaluate(predictions)
+    recall = evaluator2.evaluate(predictions)
+    print("Test Error = %g " % (1.0 - accuracy))
+    print("Accuracy = %g " % accuracy)
+    print("Recall = %g " % recall)
 
-    # confusionMatrix = [[TP, FP], [FN, TN]]
-    metrics = MulticlassMetrics(labelsAndPredictions.map(tuple))
-    confusionMatrix = metrics.confusionMatrix().toArray()
+    # Guardar el model si l'usuari ho demena
+    if save_model:
 
-    # Recall = TruePositives / (TruePositives + FalseNegatives)
-    recall = confusionMatrix[0][0] / (confusionMatrix[0][0] + confusionMatrix[1][0])
+        # Comprovar si el directori ja existeix per evitar sobreescriure
+        my_file = Path("dataOutput/myDecisionTreeClassificationModel")
+        if my_file.is_dir():
+            shutil.rmtree("dataOutput/myDecisionTreeClassificationModel")
 
-    # Precision = TruePositives / (TruePositives + FalsePositives)
-    precision = confusionMatrix[0][0] / (confusionMatrix[0][0] + confusionMatrix[0][1])
+        # guardar
+        fited_model.save("dataOutput/myDecisionTreeClassificationModel")
 
-    print('Test Error = ' + str(testErr))
-    print('Recall = ' + str(recall))
-    print('Precision = ' + str(precision))
-
-
-    # Guardar el model
-    # cuidado que es queixa si ja existeix
-    model.save(sc, "dataTemporal/myDecisionTreeClassificationModel")
-
-    # Recuperar un model guardat:
-    # sameModel = DecisionTreeModel.load(sc, "target/tmp/myDecisionTreeClassificationModel")
+    return fited_model

@@ -3,25 +3,14 @@ from pyspark.sql.types import *
 from pyspark.sql import SQLContext
 from pyspark.sql import Row
 from pyspark.sql import SparkSession
-
-import datetime
+from datetime import datetime
 import time
 from os import walk
-from pyspark.sql.functions import datediff, when, to_date, lit, unix_timestamp,col, date_format, monotonically_increasing_id, row_number
+from pyspark.sql.functions import datediff, when, to_date, lit, unix_timestamp,col, date_format, date_add, monotonically_increasing_id, row_number, to_timestamp
 from pyspark.sql.functions import rand,when
 
 
 from password import *
-
-"""
-Cal tenir el fitxer password.py and:
-    AIMSusername = "nom.cognom"
-    AIMSpassword = "DBddmmyy"
-
-(linux) Cal posar:
-     f5fpc -s -x -t https://upclink.upc.edu
-"""
-
 
 """
 Data management pipeline:
@@ -30,61 +19,21 @@ aircraft per day, and the columns refer to the FH, FC and DM KPIs, and the
 average measurement of the 3453 sensors.
 
 FH: Flight Hours (nombre d'hores de vol per dia)
-    Cal:
-        AIMS(flights): aircraftregistration(id de l'avió), actualdeparture,
-            actualarrival, canceled(format?)
 FC: Flighr Cycles (nombre de vegades que l'avió ha despegat-aterrat)
-    Cal:
-        AIMS(flights): aircraftregistration, flightid(identificador del vol, unic?),
-            canceled
 DM: Delayed Minutes (total de minuts de retard acumulat en tots els vols)
-    Cal:
-        AIMS(flights): aircraftregistration, scheduledarrival, actualarrival,
-            canceled(suposem que un vol cancelat no és un retard)
 
-Cal:    AIMS(fligths): aircraftregistration, flightid, actualdeparture, actualarrival,
-        scheduledarrival, canceled,
-
-        AMOS(maintenanceevent): aircraftregistration, starttime
-
-        csv: llegir les dades de sensors
-
------------------
-Suposicions generals:
-    - Suposem que totes les dades de AIMS i AMOS ja venen netejades i no hi haura
-    problemes raros de vols que s'intercalen i les merdes de sempre
-    - Suposem que flightid de AMOS(flights) és un identificador únic per cada vol
-    (es pot comprovar facil)
-    - Per calcular DM, suposem que un vol canelat no conta com a retard
-    - Considerem actualdeparture el dia en que es fa el vol (per a l'hora d'agregar en dies)
-    - Suposem que tots els vols arriben despres de la sortida (actualarrival > actualdeparture)
-    - Per FC assumim que totes les avions que despeguen aterren en algun moment
-    - Un FC conta pel dia en que despega, encara que aterri en un altre dia
-    - Assumim flightid un identificador únic
-    - Si un vol arriba abans de la scheduledarrival té retard negatiu que resta al retard total
-        (esta be ?)
-    - Assumim que un mateix avió pot tenir diferents manteniments programats (?)
-
-Cal fer:
-    -  Els labels son aleatoris per poder seguir treballant, cal trobar la manera de calcularlos
-    i posarlos al dataframe de forma eficient.
-    - Ara mateix es retorna el dataframe en un csv per comoditat, a l'entrega final no es poden guardar
-    dades intermitges, per tant ha d'anar tot seguit.
-    - Veure si es pot implementar .cache() per anar més ràpid
-
-    - Com a cosa extra el que ara es guarda en un csv s'hauria de guardar en Hadoop
 """
 
 
 
-def process(sc):
+def process(sc, save_csv):
     sess = SparkSession(sc)
 
-    AIMS = (sess.read
+    DW = (sess.read
 		.format("jdbc")
 		.option("driver","org.postgresql.Driver")
-		.option("url", "jdbc:postgresql://postgresfib.fib.upc.edu:6433/AIMS?sslmode=require")
-		.option("dbtable", "oldinstance.flights")
+		.option("url", "jdbc:postgresql://postgresfib.fib.upc.edu:6433/DW?sslmode=require")
+		.option("dbtable", "public.aircraftutilization")
 		.option("user", AIMSusername)
 		.option("password", AIMSpassword)
 		.load())
@@ -93,50 +42,11 @@ def process(sc):
 		.format("jdbc")
 		.option("driver","org.postgresql.Driver")
 		.option("url", "jdbc:postgresql://postgresfib.fib.upc.edu:6433/AMOS?sslmode=require")
-		.option("dbtable", "oldinstance.maintenanceevents")
+		.option("dbtable", "oldinstance.operationinterruption")
 		.option("user", AIMSusername)
 		.option("password", AIMSpassword)
 		.load())
 
-    # Afegir la columna day (2012-7-23), per poder agregar per dia
-    # Eliminar vols cancelats
-    AIMS = (AIMS.withColumn('day', AIMS['actualarrival'].cast('date'))
-        .filter(AIMS['cancelled'] == "False")
-        .withColumn('day', date_format(col("day"), "y-MM-dd"))
-        #.orderBy(["day", "aircraftregistration"],ascending=False)
-        )
-
-
-    # Sortirda: day(datetime), aircraftregistration(string), sum(duration_hours)
-    #   duration_hours = (actualarrival-actualdeparture) en hores (per dia)
-    # FUNCIONA!
-    FH = (AIMS.withColumn('duration_hours',
-            (unix_timestamp(AIMS['actualarrival'], "yyyy-MM-dd'T'hh:mm:ss")
-            - unix_timestamp(AIMS['actualdeparture'], "yyyy-MM-dd'T'hh:mm:ss"))/(60*60)
-        )
-        .select("day", "aircraftregistration", "duration_hours")
-        .groupBy("day","aircraftregistration").sum("duration_hours")
-        .withColumnRenamed("sum(duration_hours)", "FH")
-        )
-
-    # Sortirda: day(datetime), aircraftregistration(string), count()
-    #  FUNCIONA!
-    FC = (AIMS.select("day", "aircraftregistration", "flightid")
-        .groupBy("day","aircraftregistration").count()
-         .withColumnRenamed("count", "FC")
-    )
-
-    # Sortirda: day(datetime), aircraftregistration(string), sum(delay_hours)
-    #   delay_hours = (actualarrival-scheduledarrival) en hores (per dia)
-    # FUNCIONA!
-    DM = (AIMS.withColumn('delay_hours',
-            (unix_timestamp(AIMS['actualarrival'], "yyyy-MM-dd'T'hh:mm:ss")
-            - unix_timestamp(AIMS['scheduledarrival'], "yyyy-MM-dd'T'hh:mm:ss"))/(60*60)
-        )
-        .select("day", "aircraftregistration", "delay_hours")
-        .groupBy("day","aircraftregistration").sum("delay_hours")
-        .withColumnRenamed("sum(delay_hours)", "DM")
-    )
 
     # Llista de tots els .csv a llegir
     path = "resources/trainingData"
@@ -145,63 +55,61 @@ def process(sc):
         f.extend(filenames)
         break
 
+    toDate = lambda date: datetime.strptime(date[:10], "%Y-%m-%d").date()
+    #toDate2 = lambda date: datetime.strptime(date, "%Y-%m-%d").date()
     # Extreure dades de tots els .csv en un dataframe
     # Sortida: day(datetime), aircraftregistration(string), sensor_avg
     # FUNCIONA!
-    vals = list()
+    vals = []
     for filename in f:
         # Model de l'avio
         division = filename.split("-")
         aircraftid = (division[4] + "-" + division[5]).split(".")[0]
 
-        input = (sc.textFile("./" + path + "/" + filename)
-        	.filter(lambda t: "date" not in t))
-
-        # Mitjana del valor del sensor
-        sensors = input.map(lambda t: t.split(";")[2]).collect()
-        sensors = list(map(float, sensors))
-        sensor_avg = sum(sensors) / len(sensors)
-
-        # Data
-        date = list(input.map(lambda t: t.split(";")[0]).collect())
-        date = date[1].split(" ")[0] # Seleccionar una data i eliminar h:m:s
-
-        # Posar tot al DataFrame
-        vals.append([date, aircraftid, sensor_avg])
-
-    columns = ['day', 'aircraftregistration', 'sensor_avg']
-    SensorLectures = sess.createDataFrame(vals, columns)
+        vals.append(sc.textFile("./" + path + "/" + filename)
+        	.filter(lambda t: "date" not in t)
+            .map(lambda t: t.split(";"))
+            .map(lambda t: ((aircraftid, toDate(t[0])), (float(t[2]), 1))) #guardem les dades i una columna de 1s que ens
+            .reduceByKey(lambda f, f2: (f[0] + f2[0], f[1] + f2[1]))       #servirà per sumar i trobar l'average en el reduce
+        )
 
 
-    # Join de les dades d'AIMS i les dels SensorLectures
-    # FUNCIONA!
-    cond = ['day', 'aircraftregistration']
-    KPI = FH.join(FC, cond).join(DM, cond).join(SensorLectures, cond)
+    data = (sc.union(vals).
+            reduceByKey(lambda x, y: (x[0] + y[0], x[1] + y[1]))
+            .mapValues(lambda d: d[0] / d[1])) #calculem l'average
+
+    columns = ["aircraftid", "date", "sensor_avg", "flighthours", "flightcycles", "delayedminutes"]
+    KPIS = (DW.select("aircraftid", "timeid", "flighthours", "flightcycles", "delayedminutes").
+            rdd.map(lambda f: ( (f[0], f[1]) , ( float(f[2]), int(f[3]), int(f[4]), 0) ) ) )
+    joined = (data.join(KPIS).mapValues(lambda d: (d[0], *d[1])))
+    joinedDF = joined.map(lambda t: (t[0][0], t[0][1], t[1][0], t[1][1], t[1][2], t[1][3])).toDF(columns)
+
+    MaintenanceEvents = (AMOS.select("aircraftregistration", "departure", "kind", "subsystem").rdd\
+                        .filter(lambda t: str(t[3]) == "3453"))
+
+    columns2 = ["aircraftid1", "date1", "kind"]
+    LabTrueDF = (MaintenanceEvents.filter(lambda t: t[2] not in ['Revision','Maintenance'])
+            .map(lambda t: ((t[0],t[1]), 1))\
+            .map(lambda t: (t[0][0], t[0][1], t[1])))\
+            .toDF(columns2)
 
 
-    # Crear labels de manteniment
-    # Sortida: aircraftregistration(string), startime(datetime)
-    MaintenanceEvents = (AMOS.select("aircraftregistration", "starttime")
-        .withColumn('starttime', date_format(col("starttime"), "y-MM-dd"))
-    )
+    cond = [((joinedDF.aircraftid == LabTrueDF.aircraftid1) &\
+            (datediff(LabTrueDF.date1, joinedDF.date) >= 0)) &\
+            (datediff(LabTrueDF.date1, joinedDF.date) <= 6) ]
 
-    # Intent de caclcular els labels (NO FUNCIONA)
-#    lab = (KPI.join(MaintenanceEvents, 'aircraftregistration')
-#        .withColumn('label',
-#            when((unix_timestamp('day', "yyyy-MM-dd") + 60*60*24*7 >  unix_timestamp('starttime', "yyyy-MM-dd"))
-#                & (unix_timestamp('day', "yyyy-MM-dd") <  unix_timestamp('starttime', "yyyy-MM-dd")), 1)
-#            .otherwise(0))
-#        .drop('starttime')
-#        .groupBy('day', 'aircraftregistration').sum("label")
-#        )
+    joinLabel = (joinedDF.join(LabTrueDF, cond, 'left'))
+    joinLabel = joinLabel.drop("aircraftid1", "date1")
+    joinLabel = joinLabel.distinct()
+    joinLabel = joinLabel.withColumn("kind", \
+              when(joinLabel["kind"].isNull(), 0).otherwise(joinLabel["kind"]))
+    #print(joinLabel.collect(), len(joinLabel.collect()))
 
 ##################################################
-    #Resultat TEMPORAL per poder seguir treballant
-    #ESTA MALAMENT
-    # KPI_detailed: amb day i aircraftregistration (per extreure KPI's a runtime.py)
-    # KPImatrix: sense day ni aircraftregistration (pel model de prediccio de analysis.py)
-    KPI_detailed = KPI.withColumn('label', when(rand() > 0.5, 1).otherwise(0))
-    KPI_detailed.toPandas().to_csv('dataTemporal/management_detailed_temporal.csv')
+    # Eliminar data i avió per retornar la matriu de KPI
+    data_train =  joinLabel.drop("date").drop("aircraftid")
 
-    KPImatrix =  KPI_detailed.drop("day").drop("aircraftregistration")
-    KPImatrix.toPandas().to_csv('dataTemporal/management_temporal.csv')
+    # Guardar en csv en cas de que es demani
+    if save_csv:
+        data_train.toPandas().to_csv('dataOutput/KPI_matrix.csv')
+    return data_train
